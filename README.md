@@ -187,7 +187,7 @@ MEMORIES_PATH = "/< path to memories.json >/memories.json"
 
 ----
 
-### 9. Run the assistant
+### 11. Run the assistant
 
 ```bash
 max how to check disk usage

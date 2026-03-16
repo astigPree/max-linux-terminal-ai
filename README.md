@@ -4,6 +4,7 @@
 ![CLI Tool](https://img.shields.io/badge/Interface-CLI-black)
 ![OpenAI](https://img.shields.io/badge/API-OpenAI-purple)
 
+A lightweight CLI AI assistant that integrates LLM queries directly into the Linux terminal for faster developer workflows.
 
 # Short Introduction
 

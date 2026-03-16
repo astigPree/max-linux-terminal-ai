@@ -155,5 +155,7 @@ max how to check disk usage
 ```
 
 
+## Demo
 
+![Max CLI Demo](Demo-Image.jpg)
 

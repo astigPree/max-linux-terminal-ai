@@ -1,0 +1,215 @@
+#!/<path to venv>/assistant/bin/python
+
+import json
+import requests
+import sys
+import subprocess
+import os
+
+
+class Assistant: 
+    
+    past_commands = []
+    old_conversation = []
+    
+    system_prompt = "You are MAX, a fast and practical Linux terminal assistant designed for headless servers.\nYour purpose is to help the user solve Linux, DevOps, networking, and programming problems quickly from the command line.\nRules:\n1. Keep responses concise and practical.\n2. Prefer direct commands when possible.\n3. If suggesting commands, present them in a code block.\n4. Do not add unnecessary explanations unless asked.\n5. When troubleshooting, explain the likely cause and suggest next commands to investigate.\n6. Assume the user is technically capable and familiar with Linux basics.\n7. Avoid long introductions or conversational filler.\n8. Never output markdown titles or long formatting.\n9. Do not repeat the user's question.\n10. If unsure, suggest diagnostic commands instead of guessing.\nCommand formatting rules:\nWhen providing commands, always format like this:\nCOMMAND:\nIf multiple steps are required, list them clearly.\nEnvironment assumptions:\n- The user is operating a Linux server.\n- The assistant is used in a CLI environment.\n- The user may pipe logs or errors for analysis.\n- The user may ask for command-only responses.\nBehavior modes:\nIf the user explicitly asks for \"command only\", return only the command with no explanation.\nIf the user provides logs or errors, analyze them and suggest possible fixes.\nYour priority is speed, accuracy, and usefulness in a terminal environment.",
+    model = "< NAME OF MODEL >"
+    API_KEY = "< YOUR API KEY >"
+    HEADERS = None
+    URL = "< URL OF THE LLM >"
+    WORKING_SITES = {
+        "cohere" : None,
+        "bytez" : None
+    }
+
+    # This is the model I used on my projects
+    MODELS = {
+        "cohere" : "command-r7b-12-2024",
+        "bytez-1" : "openai/gpt-4.1-nano", # use this for direct commands
+        "bytez-2" : "openai/gpt-3.5-turbo" # use this for direct commands
+    }
+
+    # Support Bytez and Cohere for now
+    SITE = "bytez"
+
+
+    MAXIMUM_CONVERSATION_LENGTH = 15
+    MAXIMUM_COMMAND_LENGTH = 25
+
+    MINIMUM_TOKENS = 10
+    MAXIMUM_TOKENS = 500
+
+    MEMORIES_PATH = "/< path to memories.json >/memories.json"
+
+    REQUEST_TIMEOUT = 60
+    
+
+    def __init__(self):
+        try: 
+            with open(self.MEMORIES_PATH, "r") as f:
+                loaded_data = json.load(f)
+                self.old_conversation : list = loaded_data["conversation"]
+                self.system_prompt : str = loaded_data["system"]
+                self.model : str = loaded_data["model"]
+                self.API_KEY : str = loaded_data["api"]
+                self.URL : str = loaded_data["url"]
+
+                self.HEADERS = {
+                    "Authorization": f"Bearer {self.API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                
+        except Exception as e:
+            print(f"[ERROR] Could not load conversation from file: {e}")
+            exit(1)
+
+        self.WORKING_SITES = {
+            "cohere" : self.displayCohere,
+            "bytez" : self.displayBytez
+        }
+
+    
+
+    def ask(self, query):
+        if len(self.old_conversation) >= self.MAXIMUM_CONVERSATION_LENGTH:
+            self.old_conversation.pop(0)
+            print(f"[WARNING] Conversation length exceeded {self.MAXIMUM_CONVERSATION_LENGTH}. Removing oldest message.")
+
+        payload = {
+            "model": self.model, 
+            "messages": [
+                { "role" : "system", "content" : self.system_prompt },
+                *self.old_conversation,
+                *self.past_commands,
+                {
+                    "role": "user",
+                    "content": query
+                }
+            ],
+            "temperature": 0.5,
+            "max_tokens": self.MAXIMUM_TOKENS
+        }
+
+        response = requests.post(
+            self.URL,
+            headers=self.HEADERS,
+            json=payload,
+            timeout=self.REQUEST_TIMEOUT
+        )
+
+        if response.status_code != 200:
+            print(f"[ERROR] Cohere API returned an error: {response.status_code}")
+            exit(1)
+        
+        # Only add new user message if response is successful
+        self.old_conversation.append({
+            "role": "user",
+            "content": query
+        })
+ 
+
+        data = response.json() 
+        return data
+    
+    def displayCohere(self, response):
+        try:
+            assistant_reply = response["message"]["content"][0]["text"]
+            print("=" * 33)
+            print("MAX REPLY:")
+            print(assistant_reply)
+            print("=" * 33)
+
+            self.old_conversation.append({
+                "role": "assistant",
+                "content": assistant_reply
+            })
+        except Exception as e:
+            print(f"[ERROR] Could not parse response: {e}")
+
+    def displayBytez(self, response):
+        try: 
+            assistant_reply = response["choices"][0]['message']['content']
+            print("=" * 33)
+            print("MAX REPLY:")
+            print(assistant_reply)
+            print("=" * 33)
+
+            self.old_conversation.append({
+                "role": "assistant",
+                "content": assistant_reply
+            })
+        except Exception as e:
+            print(f"[ERROR] Could not parse response: {e}")
+
+
+    def getOldCommand(self):
+        try:
+
+            # Force bash to write current session history to file
+            subprocess.run(
+                ["bash", "-i", "-c", "history -a"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+ 
+
+            history_file = os.path.expanduser("~/.bash_history")
+            command_counter = 1
+
+            with open(history_file, "r") as f:
+                lines = f.readlines()
+
+            for line in lines[::-1]:
+                if line.startswith("#"):
+                    continue
+                if line.startswith("max"):
+                    continue
+                if line.startswith("exit"):
+                    continue
+                if line.startswith("history"):
+                    continue
+                self.past_commands.append({
+                    "role": "user",
+                    "content": f"Previous terminal command:\n{line}"
+                })
+                command_counter += 1
+                if command_counter > self.MAXIMUM_COMMAND_LENGTH:
+                    break
+ 
+
+        except Exception as e:
+            print(f"[WARNING] Could not get old command: {e}")
+            return None
+            
+    
+    def save(self):
+        try:
+            with open(self.MEMORIES_PATH, "w") as f:
+                json.dump({
+                    "system": self.system_prompt,
+                    "model": self.model,
+                    "api": self.API_KEY,
+                    "url": self.URL,
+                    "conversation": self.old_conversation
+                }, f , indent=4)
+        except Exception as e:
+            print(f"[ERROR] Could not save conversation to file: {e}")
+
+
+assistant = Assistant()
+
+if len(sys.argv) < 2:
+    print("Usage: max <query>")
+    exit(1)
+
+user_input = " ".join(sys.argv[1:])
+
+assistant.getOldCommand()
+response = assistant.ask(user_input)
+if assistant.SITE == "cohere":
+    assistant.displayCohere(response)
+elif assistant.SITE == "bytez":
+    assistant.displayBytez(response)
+
+assistant.save()
